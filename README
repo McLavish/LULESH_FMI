@@ -25,10 +25,43 @@ CMake variables:
   MPI_CXX_COMPILER      Path to the MPI C++ compiler
 
   WITH_MPI=On|Off       Build with MPI (Default: On)
+  WITH_FMI=On|Off       Build with FMI instead of MPI (Default: Off). Mutually
+                        exclusive with WITH_MPI; enabling it disables WITH_MPI.
   WITH_OPENMP=On|Off    Build with OpenMP support (Default: On)
   WITH_SILO=On|Off      Build with support for SILO. (Default: Off).
-  
+
   SILO_DIR              Path to SILO library (only needed when WITH_SILO is "On")
+
+*** Building and running with FMI ***
+
+LULESH can use FMI (https://github.com/spcl/fmi) as its communication backend in
+place of MPI. This is the groundwork for demonstrating CRIU-based rank migration;
+for now it just runs LULESH on FMI. The communication code is unchanged: a small
+MPI-compatible shim (lulesh-fmi.{h,cc}) maps the MPI calls LULESH uses onto FMI's
+blocking API, emulating the non-blocking halo exchange with a deadlock-free
+ordered flush.
+
+FMI is vendored as a git submodule under extern/fmi. Fetch it first:
+
+  $ git submodule update --init --recursive
+
+Build (Direct/TCP backend only; no S3/Redis/CRIU, so the only extra dependencies
+are Boost, ZLIB, and the bundled TCPunch):
+
+  $ cmake -S . -B build-fmi -DWITH_FMI=ON
+  $ cmake --build build-fmi -j
+
+Run. Unlike MPI there is no mpirun: each rank is a separate process that reads its
+identity from the environment (FMI_RANK, FMI_WORLD_SIZE, FMI_CONFIG,
+FMI_COMM_NAME), and a tcpunchd rendezvous server provides the Direct channel's TCP
+NAT hole-punching. The run-fmi.sh launcher starts tcpunchd and spawns the ranks:
+
+  $ ./run-fmi.sh 8 -s 10 -i 20      # 8 ranks (rank count must be a perfect cube)
+
+It uses fmi-lulesh.json (Direct backend, fault tolerance disabled) by default;
+override paths/ports via the LULESH_EXE, FMI_CONFIG, FMI_DIRECT_PORT, and
+TCPUNCHD environment variables. The "Final Origin Energy" reported by rank 0
+matches the serial and MPI builds for the same rank count and problem size.
 
 *** Notable changes in LULESH 2.0 ***
 
