@@ -63,6 +63,14 @@ override paths/ports via the LULESH_EXE, FMI_CONFIG, FMI_DIRECT_PORT, and
 TCPUNCHD environment variables. The "Final Origin Energy" reported by rank 0
 matches the serial and MPI builds for the same rank count and problem size.
 
+*** CRIU rank-migration demo ***
+
+Building on the FMI backend, MIGRATION.md describes a demo that migrates a running
+LULESH rank to a fresh process image mid-run using CRIU (via FMI's transparent
+migration), proving the rank's in-memory physics state survives: the run finishes
+with a "Final Origin Energy" bit-identical to a non-migrated run. Build it with
+-DWITH_FMI_CRIU=ON and run ./migration-demo.sh. See MIGRATION.md for prerequisites.
+
 *** Notable changes in LULESH 2.0 ***
 
 Split functionality into different files
