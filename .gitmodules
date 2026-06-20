@@ -1,0 +1,4 @@
+[submodule "extern/fmi"]
+	path = extern/fmi
+	url = git@github.com:McLavish/fmi.git
+	branch = feat/criu-state-transfer
