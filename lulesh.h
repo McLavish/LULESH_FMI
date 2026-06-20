@@ -1,10 +1,27 @@
+// Communication backend selection. Define exactly one of USE_MPI / USE_FMI to 1
+// on the compile line; both default to 0, which is a serial (single-rank) build.
 #if !defined(USE_MPI)
-# error "You should specify USE_MPI=0 or USE_MPI=1 on the compile line"
+# define USE_MPI 0
 #endif
+#if !defined(USE_FMI)
+# define USE_FMI 0
+#endif
+#if USE_MPI && USE_FMI
+# error "USE_MPI and USE_FMI are mutually exclusive; enable at most one"
+#endif
+
+// USE_DISTRIBUTED is true for any multi-rank backend (MPI or FMI). All of the
+// communication code is guarded by it; the backend header included below decides
+// what the MPI_* symbols resolve to (real MPI, or the FMI shim).
+#define USE_DISTRIBUTED (USE_MPI || USE_FMI)
 
 #if USE_MPI
 #include <mpi.h>
+#elif USE_FMI
+#include "lulesh-fmi.h"
+#endif
 
+#if USE_DISTRIBUTED
 /*
    define one of these three symbols:
 
@@ -432,8 +449,8 @@ class Domain {
    // MPI-Related additional data
    //
 
-#if USE_MPI   
-   // Communication Work space 
+#if USE_DISTRIBUTED
+   // Communication Work space
    Real_t *commDataSend ;
    Real_t *commDataRecv ;
    
