@@ -1,0 +1,8 @@
+# Out-of-source build directories
+/build/
+/build-*/
+
+# In-source object files / binaries (Makefile build)
+*.o
+*.dSYM/
+/lulesh2.0
