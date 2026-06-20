@@ -1,9 +1,8 @@
 #include "lulesh.h"
 
-// If no MPI, then this whole file is stubbed out
-#if USE_MPI
+// If serial (no communication backend), then this whole file is stubbed out
+#if USE_DISTRIBUTED
 
-#include <mpi.h>
 #include <string.h>
 
 /* Comm Routines */

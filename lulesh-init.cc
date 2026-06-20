@@ -45,7 +45,7 @@ Domain::Domain(Int_t numRanks, Index_t colLoc,
    m_nodeElemCornerList(0),
    m_regElemSize(0),
    m_regElemlist(0)
-#if USE_MPI
+#if USE_DISTRIBUTED
    , 
    commDataSend(0),
    commDataRecv(0)
@@ -206,7 +206,7 @@ Domain::~Domain()
    }
    delete [] m_regElemlist;
    
-#if USE_MPI
+#if USE_DISTRIBUTED
    delete [] commDataSend;
    delete [] commDataRecv;
 #endif
@@ -324,7 +324,7 @@ Domain::SetupThreadSupportStructures()
       if ((clv < 0) || (clv > numElem()*8)) {
 	fprintf(stderr,
 		"AllocateNodeElemIndexes(): nodeElemCornerList entry out of range!\n");
-#if USE_MPI
+#if USE_DISTRIBUTED
 	MPI_Abort(MPI_COMM_WORLD, -1);
 #else
 	exit(-1);
@@ -354,7 +354,7 @@ Domain::SetupCommBuffers(Int_t edgeNodes)
   m_planeMin = (m_planeLoc == 0)    ? 0 : 1;
   m_planeMax = (m_planeLoc == m_tp-1) ? 0 : 1;
 
-#if USE_MPI   
+#if USE_DISTRIBUTED
   // account for face communication 
   Index_t comBufSize =
     (m_rowMin + m_rowMax + m_colMin + m_colMax + m_planeMin + m_planeMax) *
@@ -400,7 +400,7 @@ Domain::SetupCommBuffers(Int_t edgeNodes)
 void
 Domain::CreateRegionIndexSets(Int_t nr, Int_t balance)
 {
-#if USE_MPI   
+#if USE_DISTRIBUTED
    int myRank;
    MPI_Comm_rank(MPI_COMM_WORLD, &myRank) ;
    srand(myRank);
@@ -684,7 +684,7 @@ void InitMeshDecomp(Int_t numRanks, Int_t myRank,
    testProcs = Int_t(cbrt(Real_t(numRanks))+0.5) ;
    if (testProcs*testProcs*testProcs != numRanks) {
       printf("Num processors must be a cube of an integer (1, 8, 27, ...)\n") ;
-#if USE_MPI      
+#if USE_DISTRIBUTED
       MPI_Abort(MPI_COMM_WORLD, -1) ;
 #else
       exit(-1);
@@ -692,7 +692,7 @@ void InitMeshDecomp(Int_t numRanks, Int_t myRank,
    }
    if (sizeof(Real_t) != 4 && sizeof(Real_t) != 8) {
       printf("MPI operations only support float and double right now...\n");
-#if USE_MPI      
+#if USE_DISTRIBUTED
       MPI_Abort(MPI_COMM_WORLD, -1) ;
 #else
       exit(-1);
@@ -700,7 +700,7 @@ void InitMeshDecomp(Int_t numRanks, Int_t myRank,
    }
    if (MAX_FIELDS_PER_MPI_COMM > CACHE_COHERENCE_PAD_REAL) {
       printf("corner element comm buffers too small.  Fix code.\n") ;
-#if USE_MPI      
+#if USE_DISTRIBUTED
       MPI_Abort(MPI_COMM_WORLD, -1) ;
 #else
       exit(-1);
@@ -714,7 +714,7 @@ void InitMeshDecomp(Int_t numRanks, Int_t myRank,
    // temporary test
    if (dx*dy*dz != numRanks) {
       printf("error -- must have as many domains as procs\n") ;
-#if USE_MPI      
+#if USE_DISTRIBUTED
       MPI_Abort(MPI_COMM_WORLD, -1) ;
 #else
       exit(-1);
