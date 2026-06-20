@@ -29,6 +29,7 @@
 #include <cstdlib>
 #include <exception>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -155,6 +156,37 @@ void scalar_collective(const void* sendbuf, void* recvbuf, MPI_Op op, int root, 
     }
 }
 
+// Demo support for the CRIU rank-migration demo (no effect on normal runs).
+//
+// LULESH calls MPI_Allreduce exactly once per cycle (the top-of-cycle `dt` MIN
+// reduction in TimeIncrement). That point is a clean migration quiesce boundary:
+// the previous cycle's point-to-point halo flushes have all completed (no
+// in-flight messages to strand) and every rank meets here collectively. When
+// FMI_MIGRATE_AT_CYCLE=C is set, the C-th allreduce call prints a marker and
+// holds for FMI_MIGRATE_WINDOW_MS *before* entering the collective, giving the
+// demo driver a deterministic window to mark a pending CRIU migration. FMI's
+// transparent-migration runtime then quiesces the targeted rank inside this very
+// allreduce (at the OperationGuard boundary). With the env unset this is a no-op,
+// so ordinary FMI runs are unchanged.
+void maybe_open_migration_window(long call_no) {
+    const char* at = std::getenv("FMI_MIGRATE_AT_CYCLE");
+    if (at == nullptr || at[0] == '\0') return;
+    if (call_no != std::atol(at)) return;
+
+    long window_ms = 8000;
+    if (const char* w = std::getenv("FMI_MIGRATE_WINDOW_MS")) {
+        if (w[0] != '\0') window_ms = std::atol(w);
+    }
+    std::fprintf(stderr,
+                 "FMI_MIGRATE: window open rank=%d allreduce_call=%ld holding_ms=%ld "
+                 "(quiesce point reached; mark a pending migration now)\n",
+                 g_rank, call_no, window_ms);
+    std::fflush(stderr);
+    std::this_thread::sleep_for(std::chrono::milliseconds(window_ms));
+    std::fprintf(stderr, "FMI_MIGRATE: window closed rank=%d entering allreduce\n", g_rank);
+    std::fflush(stderr);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -223,6 +255,8 @@ int MPI_Allreduce(const void* sendbuf, void* recvbuf, int count,
                   MPI_Datatype datatype, MPI_Op op, MPI_Comm /*comm*/) {
     if (count != 1) fail("MPI_Allreduce shim supports count==1 only");
     assert_no_pending("MPI_Allreduce");
+    static long allreduce_calls = 0;
+    maybe_open_migration_window(++allreduce_calls);
     try {
         if (datatype == MPI_DOUBLE)
             scalar_collective<double>(sendbuf, recvbuf, op, /*root*/ 0, /*allreduce*/ true);
