@@ -26,10 +26,13 @@
 # Usage:   ./migration-demo.sh
 # Tunables (env): N NX ITERS MIGRATE_RANK MIGRATE_CYCLE WINDOW_MS COMM_NAME
 #                 BUILD_DIR LULESH_EXE SUPERVISOR FT_CONFIG NOFT_CONFIG
-#                 TCPUNCHD FMI_DIRECT_PORT IMAGES_DIR FMI_CRIU_EXTRA_ARGS
+#                 TCPUNCHD IMAGES_DIR FMI_CRIU_EXTRA_ARGS
+# The rendezvous port is taken from the config's backends.Direct.port.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=fmi-common.sh
+. "${ROOT}/fmi-common.sh"
 
 # ---- configuration (env-overridable) ----
 N="${N:-8}"                       # rank count (must be a perfect cube for LULESH)
@@ -45,7 +48,6 @@ SUPERVISOR="${SUPERVISOR:-${BUILD}/extern/fmi/tools/fmi-migration-supervisor}"
 FT_CONFIG="${FT_CONFIG:-${ROOT}/fmi-lulesh-ft.json}"
 NOFT_CONFIG="${NOFT_CONFIG:-${ROOT}/fmi-lulesh.json}"
 TCPUNCHD="${TCPUNCHD:-${ROOT}/extern/fmi/extern/TCPunch/server/build/tcpunchd}"
-PORT="${FMI_DIRECT_PORT:-10000}"
 IMAGES_DIR="${IMAGES_DIR:-/tmp/fmi-criu-images}"
 COMM_NAME="${COMM_NAME:-lulesh-criu-$$-$(date +%s)}"
 export FMI_CRIU_EXTRA_ARGS="${FMI_CRIU_EXTRA_ARGS:---unprivileged}"
@@ -69,15 +71,12 @@ command -v criu      >/dev/null 2>&1 || die "criu not on PATH"
 command -v redis-cli >/dev/null 2>&1 || die "redis-cli not on PATH"
 redis-cli ping       >/dev/null 2>&1 || die "Redis not reachable (start redis-server)"
 
-# Build tcpunchd on first use if missing.
-if [ ! -x "$TCPUNCHD" ]; then
-  log "building tcpunchd"
-  cmake -S "${ROOT}/extern/fmi/extern/TCPunch/server" -B "$(dirname "$TCPUNCHD")" -DCMAKE_BUILD_TYPE=Release >/dev/null
-  cmake --build "$(dirname "$TCPUNCHD")" >/dev/null
-fi
+# Rendezvous port = whatever FMI pairs on (the config's backends.Direct.port).
+PORT="$(fmi_config_port "$FT_CONFIG")"
 
-# ---- tcpunchd rendezvous (reuse or start; torn down on exit) ----
-port_in_use() { { ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null; } | grep -q ":${PORT}[[:space:]]"; }
+# tcpunchd: build on first use, then reuse an existing rendezvous server or start
+# our own. Torn down on exit along with any rank processes we still own.
+fmi_build_tcpunchd_if_missing "$TCPUNCHD" "$ROOT"
 TPID=""
 RANK_PIDS=()
 cleanup() {
@@ -86,14 +85,8 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if port_in_use; then
-  log "reusing rendezvous server on :${PORT}"
-else
-  "$TCPUNCHD" "$PORT" >"${LOGDIR}/tcpunchd.log" 2>&1 &
-  TPID=$!
-  for _ in $(seq 1 50); do port_in_use && break; sleep 0.1; done
-  port_in_use || { cat "${LOGDIR}/tcpunchd.log" >&2; die "tcpunchd failed to listen on :${PORT}"; }
-fi
+TPID="$(fmi_start_tcpunchd "$TCPUNCHD" "$PORT" "${LOGDIR}/tcpunchd.log")" \
+  || die "could not bring up tcpunchd on port $PORT"
 
 log "comm_name=${COMM_NAME} logs=${LOGDIR} criu_extra='${FMI_CRIU_EXTRA_ARGS}'"
 

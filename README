@@ -59,9 +59,11 @@ NAT hole-punching. The run-fmi.sh launcher starts tcpunchd and spawns the ranks:
   $ ./run-fmi.sh 8 -s 10 -i 20      # 8 ranks (rank count must be a perfect cube)
 
 It uses fmi-lulesh.json (Direct backend, fault tolerance disabled) by default;
-override paths/ports via the LULESH_EXE, FMI_CONFIG, FMI_DIRECT_PORT, and
-TCPUNCHD environment variables. The "Final Origin Energy" reported by rank 0
-matches the serial and MPI builds for the same rank count and problem size.
+override paths via the LULESH_EXE, FMI_CONFIG, and TCPUNCHD environment
+variables. The rendezvous port is taken from the config's backends.Direct.port
+(the port FMI itself pairs on), so change it there rather than via an env var.
+The "Final Origin Energy" reported by rank 0 matches the serial and MPI builds
+for the same rank count and problem size.
 
 *** CRIU rank-migration demo ***
 

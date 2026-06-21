@@ -12,11 +12,15 @@
 # <num_ranks> must be a perfect cube (1, 8, 27, 64, ...), as LULESH decomposes
 # the domain into a cubic processor grid.
 #
-# Env overrides: LULESH_EXE, FMI_CONFIG, TCPUNCHD, FMI_DIRECT_PORT, FMI_COMM_NAME,
-# OMP_NUM_THREADS (defaults to 1 to avoid thread oversubscription across ranks).
+# Env overrides: LULESH_EXE, FMI_CONFIG, TCPUNCHD, FMI_COMM_NAME, OMP_NUM_THREADS
+# (defaults to 1 to avoid thread oversubscription across ranks). The rendezvous
+# port is taken from the config's backends.Direct.port (the port FMI pairs on);
+# to change it, edit the JSON or point FMI_CONFIG at a different file.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=fmi-common.sh
+. "${ROOT}/fmi-common.sh"
 
 if [ "$#" -lt 1 ]; then
   echo "usage: $0 <num_ranks> [lulesh args...]" >&2
@@ -28,39 +32,25 @@ LULESH_ARGS=("$@")
 EXE="${LULESH_EXE:-${ROOT}/build-fmi/lulesh2.0}"
 CONFIG="${FMI_CONFIG:-${ROOT}/fmi-lulesh.json}"
 TCPUNCHD="${TCPUNCHD:-${ROOT}/extern/fmi/extern/TCPunch/server/build/tcpunchd}"
-PORT="${FMI_DIRECT_PORT:-10000}"
 COMM_NAME="${FMI_COMM_NAME:-lulesh-$$-$(date +%s)}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 
 [ -x "$EXE" ]      || { echo "executable not found: $EXE (build with: cmake -S . -B build-fmi -DWITH_FMI=ON && cmake --build build-fmi)" >&2; exit 1; }
 [ -f "$CONFIG" ]   || { echo "config not found: $CONFIG" >&2; exit 1; }
+PORT="$(fmi_config_port "$CONFIG")"
 
-# Build tcpunchd on first use if it is missing.
-if [ ! -x "$TCPUNCHD" ]; then
-  echo "[run-fmi] building tcpunchd..."
-  cmake -S "${ROOT}/extern/fmi/extern/TCPunch/server" -B "${ROOT}/extern/fmi/extern/TCPunch/server/build" -DCMAKE_BUILD_TYPE=Release >/dev/null
-  cmake --build "${ROOT}/extern/fmi/extern/TCPunch/server/build" >/dev/null
-fi
+# tcpunchd: build on first use, then reuse an existing rendezvous server on this
+# port or start our own (torn down on exit, including when killed by `timeout`). A
+# stale tcpunchd holding the port with leftover state is the classic pairing hang.
+fmi_build_tcpunchd_if_missing "$TCPUNCHD" "$ROOT"
 
-port_in_use() { { ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null; } | grep -q ":${PORT}[[:space:]]"; }
-
+TPLOG="$(mktemp)"
 TPID=""
-TPLOG=""
-cleanup() { [ -n "$TPID" ] && kill "$TPID" 2>/dev/null; [ -n "$TPLOG" ] && rm -f "$TPLOG"; }
+cleanup() { [ -n "$TPID" ] && kill "$TPID" 2>/dev/null; rm -f "$TPLOG"; }
 trap cleanup EXIT INT TERM
 
-# Reuse an already-running rendezvous server on this port; otherwise start our own
-# (and tear it down on exit, including when killed by `timeout`). A stale tcpunchd
-# holding the port with leftover state is the classic cause of pairing hangs.
-if port_in_use; then
-  echo "[run-fmi] reusing existing rendezvous server on port $PORT"
-else
-  TPLOG="$(mktemp)"
-  "$TCPUNCHD" "$PORT" >"$TPLOG" 2>&1 &
-  TPID=$!
-  for _ in $(seq 1 50); do port_in_use && break; sleep 0.1; done
-  port_in_use || { echo "[run-fmi] tcpunchd failed to listen on port $PORT:" >&2; cat "$TPLOG" >&2; exit 1; }
-fi
+TPID="$(fmi_start_tcpunchd "$TCPUNCHD" "$PORT" "$TPLOG")" \
+  || { echo "[run-fmi] could not bring up tcpunchd on port $PORT" >&2; exit 1; }
 
 LOGDIR="$(mktemp -d)"
 echo "[run-fmi] N=$N comm_name=$COMM_NAME port=$PORT logs=$LOGDIR"
