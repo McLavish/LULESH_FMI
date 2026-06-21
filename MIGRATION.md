@@ -86,11 +86,19 @@ epoch (meta current_epoch)   = 1
 ```
 
 Tunables (env): `N`, `NX`, `ITERS`, `MIGRATE_RANK`, `MIGRATE_CYCLE`, `WINDOW_MS`,
-`COMM_NAME`, `FMI_DIRECT_PORT`, `IMAGES_DIR`, `FMI_CRIU_EXTRA_ARGS`, and the path
-overrides `BUILD_DIR`/`LULESH_EXE`/`SUPERVISOR`/`FT_CONFIG`/`NOFT_CONFIG`. Per-rank
-logs are written under a fresh temp dir printed at startup. The CRIU fault-tolerance
-config is `fmi-lulesh-ft.json` (Direct data plane + Redis control plane,
+`MAX_ATTEMPTS`, `COMM_NAME`, `IMAGES_DIR`, `FMI_CRIU_EXTRA_ARGS`, and the path
+overrides `BUILD_DIR`/`LULESH_EXE`/`SUPERVISOR`/`FT_CONFIG`/`NOFT_CONFIG`. The
+rendezvous port comes from the config's `backends.Direct.port`. Per-rank logs are
+written under a fresh temp dir printed at startup. The CRIU fault-tolerance config
+is `fmi-lulesh-ft.json` (Direct data plane + Redis control plane,
 `state_transfer="criu"`).
+
+Under machine load the Direct (TCP NAT hole-punch) pairing can occasionally time
+out on the first halo exchange, which would otherwise fail the run before the
+migration window. The driver retries such *transient* failures up to
+`MAX_ATTEMPTS` (default 3) times, each under a fresh `comm_name`; a genuine
+state-loss bug instead surfaces as a wrong-but-present energy and is never retried
+(the `energy == golden` check fails hard).
 
 ## v1 limitations (inherited from FMI's CRIU path)
 
