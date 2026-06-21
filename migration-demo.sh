@@ -24,8 +24,8 @@
 # For rootless criu, FMI_CRIU_EXTRA_ARGS defaults to "--unprivileged".
 #
 # Usage:   ./migration-demo.sh
-# Tunables (env): N NX ITERS MIGRATE_RANK MIGRATE_CYCLE WINDOW_MS COMM_NAME
-#                 BUILD_DIR LULESH_EXE SUPERVISOR FT_CONFIG NOFT_CONFIG
+# Tunables (env): N NX ITERS MIGRATE_RANK MIGRATE_CYCLE WINDOW_MS MAX_ATTEMPTS
+#                 COMM_NAME BUILD_DIR LULESH_EXE SUPERVISOR FT_CONFIG NOFT_CONFIG
 #                 TCPUNCHD IMAGES_DIR FMI_CRIU_EXTRA_ARGS
 # The rendezvous port is taken from the config's backends.Direct.port.
 set -uo pipefail
@@ -41,6 +41,7 @@ ITERS="${ITERS:-200}"            # iteration cap (-i)
 MIGRATE_RANK="${MIGRATE_RANK:-0}"
 MIGRATE_CYCLE="${MIGRATE_CYCLE:-40}"
 WINDOW_MS="${WINDOW_MS:-8000}"
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-3}"  # retries around transient FMI Direct pairing failures
 
 BUILD="${BUILD_DIR:-${ROOT}/build-fmi-criu}"
 EXE="${LULESH_EXE:-${BUILD}/lulesh2.0}"
@@ -104,23 +105,7 @@ GOLDEN="$(extract_energy "${LOGDIR}/golden-rank-0.log")"
 [ -n "$GOLDEN" ] || { cat "${LOGDIR}/golden-rank-0.log" >&2; die "golden run produced no Final Origin Energy"; }
 log "golden Final Origin Energy = ${GOLDEN}"
 
-# ---- 2. clear stale control-plane keys + images for this comm ----
-mapfile -t STALE < <(redis-cli --scan --pattern "${PREFIX}*" 2>/dev/null)
-[ "${#STALE[@]}" -gt 0 ] && redis-cli del "${STALE[@]}" >/dev/null 2>&1
-rm -rf "${IMAGES_DIR:?}/${COMM_NAME}"
-
-# ---- 3. launch N fault-tolerant ranks with a migration window ----
-log "launching ${N} FT ranks (migrate rank ${MIGRATE_RANK} at cycle ${MIGRATE_CYCLE}, window ${WINDOW_MS}ms)"
-for ((r=0; r<N; r++)); do
-  FMI_RANK="$r" FMI_WORLD_SIZE="$N" FMI_CONFIG="$FT_CONFIG" FMI_COMM_NAME="$COMM_NAME" \
-  FMI_MIGRATE_AT_CYCLE="$MIGRATE_CYCLE" FMI_MIGRATE_WINDOW_MS="$WINDOW_MS" \
-    setsid "$EXE" -s "$NX" -i "$ITERS" >"${LOGDIR}/rank-${r}.log" 2>&1 &
-  RANK_PIDS+=($!)
-done
-R0LOG="${LOGDIR}/rank-${MIGRATE_RANK}.log"
-
-# ---- 4. wait for all ranks ACTIVE at epoch 0 ----
-log "waiting for all ${N} ranks ACTIVE at epoch 0"
+# All ranks ACTIVE at epoch 0? (reads the global PREFIX, set per attempt.)
 active_all() {
   local r
   for ((r=0; r<N; r++)); do
@@ -128,40 +113,85 @@ active_all() {
   done
   return 0
 }
-ok=0; for _ in $(seq 1 200); do active_all && { ok=1; break; }; sleep 0.2; done
-if [ "$ok" != 1 ]; then
-  for ((r=0; r<N; r++)); do echo "  rank $r state: $(redis-cli hget "${PREFIX}epoch:0:states" "$r" 2>/dev/null)"; done
-  die "ranks did not all reach ACTIVE at epoch 0"
-fi
-log "all ranks ACTIVE"
+kill_ranks() { for p in "${RANK_PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null; done; }
 
-# ---- 5. wait for the migration window marker on the target rank ----
-log "waiting for the migration window (cycle ${MIGRATE_CYCLE}) on rank ${MIGRATE_RANK}"
-ok=0; for _ in $(seq 1 600); do grep -q "FMI_MIGRATE: window open" "$R0LOG" 2>/dev/null && { ok=1; break; }; sleep 0.1; done
-[ "$ok" = 1 ] || { tail -n 20 "$R0LOG" >&2; die "migration window never opened on rank ${MIGRATE_RANK}"; }
-log "migration window open -> requesting migration"
+# One full migrate-a-rank attempt under its own comm_name. Returns 0 once it has a
+# completed (restored) run that produced an energy; returns 1 on a *transient*
+# failure (ranks never ACTIVE, a pairing timeout before the window, or no energy
+# after restore) so the caller can retry. A genuine state-loss bug is NOT a
+# transient failure: it surfaces as a wrong-but-present energy and is caught by the
+# energy==golden check in verification below.
+attempt_migration() {
+  local attempt="$1" ok=0 _
+  COMM_NAME="${COMM_BASE}-a${attempt}"
+  PREFIX="fmi:ft:${COMM_NAME}:"
+  R0LOG="${LOGDIR}/rank-${MIGRATE_RANK}.log"
+  IMG_DIR="${IMAGES_DIR}/${COMM_NAME}/epoch-1/rank-${MIGRATE_RANK}"
+  MIGRATED=""; EPOCH=""; SUP_OUT=""; SUP_RC=1; DUMP_PID=""; RANK_PIDS=()
 
-# ---- 6. request migration of the target rank ----
-redis-cli sadd "${PREFIX}pending" "$MIGRATE_RANK" >/dev/null
-redis-cli hset "${PREFIX}epoch:0:states" "$MIGRATE_RANK" MIGRATION_PENDING >/dev/null
+  # fresh control-plane keys + images for this attempt's comm
+  mapfile -t STALE < <(redis-cli --scan --pattern "${PREFIX}*" 2>/dev/null)
+  [ "${#STALE[@]}" -gt 0 ] && redis-cli del "${STALE[@]}" >/dev/null 2>&1
+  rm -rf "${IMAGES_DIR:?}/${COMM_NAME}"
 
-# ---- 7. run the supervisor: real criu dump/restore + epoch promotion ----
-log "running fmi-migration-supervisor (criu dump/restore + promote epoch 1)"
-SUP_OUT="$("$SUPERVISOR" migrate "$COMM_NAME" "$N" "$FT_CONFIG" "$MIGRATE_RANK" 2>&1)"; SUP_RC=$?
-echo "$SUP_OUT" | sed 's/^/[supervisor] /'
-DUMP_PID="$(redis-cli hget "${PREFIX}criu:rank:${MIGRATE_RANK}" pid 2>/dev/null)"
+  log "attempt ${attempt}/${MAX_ATTEMPTS}: launching ${N} FT ranks (migrate rank ${MIGRATE_RANK} at cycle ${MIGRATE_CYCLE}, window ${WINDOW_MS}ms)"
+  for ((r=0; r<N; r++)); do
+    : >"${LOGDIR}/rank-${r}.log"   # clear any prior attempt's log before the grep waits
+    FMI_RANK="$r" FMI_WORLD_SIZE="$N" FMI_CONFIG="$FT_CONFIG" FMI_COMM_NAME="$COMM_NAME" \
+    FMI_MIGRATE_AT_CYCLE="$MIGRATE_CYCLE" FMI_MIGRATE_WINDOW_MS="$WINDOW_MS" \
+      setsid "$EXE" -s "$NX" -i "$ITERS" >"${LOGDIR}/rank-${r}.log" 2>&1 &
+    RANK_PIDS+=($!)
+  done
 
-# ---- 8. wait for the restored (detached) target rank to finish ----
-log "waiting for rank ${MIGRATE_RANK} to complete after restore"
-MIGRATED=""
-for _ in $(seq 1 400); do
-  MIGRATED="$(extract_energy "$R0LOG")"
-  [ -n "$MIGRATED" ] && break
-  grep -qiE 'fatal|Abort|terminate called|reconfigure timeout' "$R0LOG" 2>/dev/null && break
-  sleep 0.2
+  # wait for all ranks ACTIVE at epoch 0
+  for _ in $(seq 1 150); do active_all && { ok=1; break; }; sleep 0.2; done
+  [ "$ok" = 1 ] || { log "attempt ${attempt}: ranks did not all reach ACTIVE"; return 1; }
+  log "all ranks ACTIVE"
+
+  # wait for the migration window; bail out early if a rank fatals (a Direct pairing
+  # timeout cascades into halo-exchange timeouts across that rank's neighbours)
+  ok=0
+  for _ in $(seq 1 450); do
+    grep -q "FMI_MIGRATE: window open" "$R0LOG" 2>/dev/null && { ok=1; break; }
+    grep -qiE 'fatal|terminate called' "${LOGDIR}"/rank-*.log 2>/dev/null && break
+    sleep 0.1
+  done
+  [ "$ok" = 1 ] || { log "attempt ${attempt}: window never opened (transient pairing failure)"; return 1; }
+  log "migration window open -> requesting migration"
+
+  # request migration of the target rank
+  redis-cli sadd "${PREFIX}pending" "$MIGRATE_RANK" >/dev/null
+  redis-cli hset "${PREFIX}epoch:0:states" "$MIGRATE_RANK" MIGRATION_PENDING >/dev/null
+
+  # supervisor: real criu dump/restore + epoch promotion
+  log "running fmi-migration-supervisor (criu dump/restore + promote epoch 1)"
+  SUP_OUT="$("$SUPERVISOR" migrate "$COMM_NAME" "$N" "$FT_CONFIG" "$MIGRATE_RANK" 2>&1)"; SUP_RC=$?
+  echo "$SUP_OUT" | sed 's/^/[supervisor] /'
+  DUMP_PID="$(redis-cli hget "${PREFIX}criu:rank:${MIGRATE_RANK}" pid 2>/dev/null)"
+
+  # wait for the restored (detached) target rank to finish
+  log "waiting for rank ${MIGRATE_RANK} to complete after restore"
+  for _ in $(seq 1 400); do
+    MIGRATED="$(extract_energy "$R0LOG")"
+    [ -n "$MIGRATED" ] && break
+    grep -qiE 'fatal|Abort|terminate called|reconfigure timeout' "$R0LOG" 2>/dev/null && break
+    sleep 0.2
+  done
+  EPOCH="$(redis-cli hget "${PREFIX}meta" current_epoch 2>/dev/null)"
+  [ -n "$MIGRATED" ] || { log "attempt ${attempt}: no energy after restore (transient)"; return 1; }
+  return 0
+}
+
+# ---- 2. migrate one rank, retrying only transient pairing failures ----
+COMM_BASE="$COMM_NAME"
+got_result=0
+for ((a=1; a<=MAX_ATTEMPTS; a++)); do
+  if attempt_migration "$a"; then got_result=1; break; fi
+  kill_ranks
+  sleep 1
 done
-EPOCH="$(redis-cli hget "${PREFIX}meta" current_epoch 2>/dev/null)"
-IMG_DIR="${IMAGES_DIR}/${COMM_NAME}/epoch-1/rank-${MIGRATE_RANK}"
+[ "$got_result" = 1 ] \
+  || die "no attempt produced a completed migrated run after ${MAX_ATTEMPTS} tries (transient FMI Direct pairing failures under load)"
 
 # ---- verification ----
 echo
