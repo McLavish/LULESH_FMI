@@ -260,8 +260,10 @@ int MPI_Allreduce(const void* sendbuf, void* recvbuf, int count,
     try {
         if (datatype == MPI_DOUBLE)
             scalar_collective<double>(sendbuf, recvbuf, op, /*root*/ 0, /*allreduce*/ true);
-        else
+        else if (datatype == MPI_FLOAT)
             scalar_collective<float>(sendbuf, recvbuf, op, /*root*/ 0, /*allreduce*/ true);
+        else
+            fail("MPI_Allreduce shim supports MPI_DOUBLE/MPI_FLOAT only");
     } catch (const std::exception& e) {
         fail(std::string("allreduce failed: ") + e.what());
     } catch (...) {
@@ -277,8 +279,10 @@ int MPI_Reduce(const void* sendbuf, void* recvbuf, int count,
     try {
         if (datatype == MPI_DOUBLE)
             scalar_collective<double>(sendbuf, recvbuf, op, root, /*allreduce*/ false);
-        else
+        else if (datatype == MPI_FLOAT)
             scalar_collective<float>(sendbuf, recvbuf, op, root, /*allreduce*/ false);
+        else
+            fail("MPI_Reduce shim supports MPI_DOUBLE/MPI_FLOAT only");
     } catch (const std::exception& e) {
         fail(std::string("reduce failed: ") + e.what());
     } catch (...) {
