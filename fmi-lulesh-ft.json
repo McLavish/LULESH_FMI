@@ -56,12 +56,13 @@
     "control_host": "127.0.0.1",
     "control_port": 6379,
     "poll_interval_ms": 50,
-    "reconfigure_timeout_ms": 60000,
     "preferred_data_backend": "Direct",
     "state_transfer": "criu",
-    "images_dir": "/tmp/fmi-criu-images",
-    "poll_ms": 50,
-    "quiesce_timeout_ms": 60000,
-    "host_id": "local-criu-host"
+    "criu": {
+      "images_dir": "/tmp/fmi-criu-images",
+      "poll_ms": 50,
+      "quiesce_timeout_ms": 60000,
+      "host_id": "local-criu-host"
+    }
   }
 }

@@ -22,11 +22,11 @@ The demo asserts all of:
 
 - migrated `Final Origin Energy` **==** golden (state preserved across CRIU);
 - `fmi:ft:<comm>:meta current_epoch` **== 1** (the epoch advanced);
-- the supervisor printed `migrated_rank=0 promoted_epoch=1` and exited 0;
+- the rank agent printed `migrated_rank=0 promoted_epoch=1` and exited 0;
 - a CRIU image tree (`core-*.img`, `files.img`, `dump.log`, …) was produced.
 
 > CRIU restores a process under its **original PID**, so the PID does not change —
-> the evidence that migration physically happened is the epoch bump, the supervisor
+> the evidence that migration physically happened is the epoch bump, the rank-agent
 > result, and the on-disk CRIU images, not a new PID.
 
 ## How it quiesces cleanly
@@ -62,7 +62,7 @@ cmake --build build-fmi-criu -j
 
 `WITH_FMI_CRIU` implies the FMI backend and turns on FMI's Redis control plane, CRIU
 state transfer, and tools, producing `build-fmi-criu/lulesh2.0` and
-`build-fmi-criu/extern/fmi/tools/fmi-migration-supervisor`. Build single-threaded
+`build-fmi-criu/extern/fmi/tools/fmi-rank-agent`. Build single-threaded
 (`-DWITH_OPENMP=OFF`, the driver also sets `OMP_NUM_THREADS=1`) so the CRIU image is
 clean.
 
@@ -78,7 +78,7 @@ Expected tail:
 ================= RESULT =================
 golden   Final Origin Energy = 8.105927e+05
 migrated Final Origin Energy = 8.105927e+05
-supervisor                   = rc=0  migrated_rank=0 promoted_epoch=1
+rank-agent                   = rc=0  migrated_rank=0 promoted_epoch=1
 epoch (meta current_epoch)   = 1
 ...
 [demo] PASS
@@ -87,7 +87,7 @@ epoch (meta current_epoch)   = 1
 
 Tunables (env): `N`, `NX`, `ITERS`, `MIGRATE_RANK`, `MIGRATE_CYCLE`, `WINDOW_MS`,
 `MAX_ATTEMPTS`, `COMM_NAME`, `IMAGES_DIR`, `FMI_CRIU_EXTRA_ARGS`, and the path
-overrides `BUILD_DIR`/`LULESH_EXE`/`SUPERVISOR`/`FT_CONFIG`/`NOFT_CONFIG`. The
+overrides `BUILD_DIR`/`LULESH_EXE`/`RANK_AGENT`/`FT_CONFIG`/`NOFT_CONFIG`. The
 rendezvous port comes from the config's `backends.Direct.port`. Per-rank logs are
 written under a fresh temp dir printed at startup. The CRIU fault-tolerance config
 is `fmi-lulesh-ft.json` (Direct data plane + Redis control plane,

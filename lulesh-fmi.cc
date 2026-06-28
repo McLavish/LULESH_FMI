@@ -72,6 +72,26 @@ void reset_batch_if_flushed() {
     }
 }
 
+// Record one point-to-point request for the current batch. LULESH's 26-neighbour
+// stencil posts at most one message per peer per direction per phase, and that
+// invariant is exactly what makes the tag-less, FIFO-matched flush correct: with two
+// same-direction messages to one peer in a single phase, FMI's FIFO socket could
+// pair them by arrival order and silently mismatch their sizes. MPI does not enforce
+// this, so guard it here -- turn a future regression into a loud failure rather than
+// silent data corruption.
+void record_pending(bool is_send, int peer, char* buf, size_t bytes) {
+    reset_batch_if_flushed();
+    for (const PendingOp& op : g_pending) {
+        if (op.peer == peer && op.is_send == is_send) {
+            fail(std::string(is_send ? "MPI_Isend" : "MPI_Irecv") + ": a second " +
+                 (is_send ? "send to" : "recv from") + " peer " + std::to_string(peer) +
+                 " in one exchange phase breaks the shim's one-message-per-peer-per-"
+                 "direction assumption (tag-less FIFO matching would mispair them)");
+        }
+    }
+    g_pending.push_back(PendingOp{is_send, peer, buf, bytes});
+}
+
 void send_one(const PendingOp& op) {
     FMI::Comm::Data<void*> d(static_cast<void*>(op.buf), op.bytes);
     g_comm->send(d, static_cast<FMI::Utils::peer_num>(op.peer));
@@ -297,19 +317,16 @@ int MPI_Reduce(const void* sendbuf, void* recvbuf, int count,
 
 int MPI_Irecv(void* buf, int count, MPI_Datatype datatype, int src, int /*tag*/,
               MPI_Comm /*comm*/, MPI_Request* request) {
-    reset_batch_if_flushed();
-    g_pending.push_back(PendingOp{false, src, static_cast<char*>(buf),
-                                  static_cast<size_t>(count) * static_cast<size_t>(datatype)});
+    record_pending(/*is_send*/ false, src, static_cast<char*>(buf),
+                   static_cast<size_t>(count) * static_cast<size_t>(datatype));
     if (request) *request = 1;
     return MPI_SUCCESS;
 }
 
 int MPI_Isend(const void* buf, int count, MPI_Datatype datatype, int dest, int /*tag*/,
               MPI_Comm /*comm*/, MPI_Request* request) {
-    reset_batch_if_flushed();
-    g_pending.push_back(PendingOp{true, dest,
-                                  static_cast<char*>(const_cast<void*>(buf)),
-                                  static_cast<size_t>(count) * static_cast<size_t>(datatype)});
+    record_pending(/*is_send*/ true, dest, static_cast<char*>(const_cast<void*>(buf)),
+                   static_cast<size_t>(count) * static_cast<size_t>(datatype));
     if (request) *request = 1;
     return MPI_SUCCESS;
 }

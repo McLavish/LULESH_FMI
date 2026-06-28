@@ -9,7 +9,7 @@ option(WITH_OPENMP   "Build LULESH with OpenMP"       TRUE)
 option(WITH_SILO     "Build LULESH with silo support" FALSE)
 
 # CRIU migration support is an extension of the FMI backend: it pulls in FMI's
-# Redis control plane, CRIU state transfer, and the fmi-migration-supervisor tool
+# Redis control plane, CRIU state transfer, and the fmi-rank-agent tool
 # (see the WITH_FMI branch below). Asking for it implies the FMI backend.
 if (WITH_FMI_CRIU)
   set(WITH_FMI ON)
@@ -32,7 +32,7 @@ elseif (WITH_FMI)
   set(FMI_ENABLE_S3 OFF CACHE BOOL "" FORCE)
   if (WITH_FMI_CRIU)
     # CRIU rank-migration demo: enable the Redis control plane + CRIU state
-    # transfer, and build FMI's tools so fmi-migration-supervisor is produced
+    # transfer, and build FMI's tools so fmi-rank-agent is produced
     # (tools default OFF when FMI is consumed via add_subdirectory). Requires
     # Redis + hiredis at build time.
     set(FMI_ENABLE_REDIS ON CACHE BOOL "" FORCE)

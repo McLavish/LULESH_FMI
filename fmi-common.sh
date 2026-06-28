@@ -21,6 +21,18 @@ fmi_config_port() {
   echo "${port:-10000}"
 }
 
+# Echo fault_tolerance.criu.images_dir from an FMI JSON config (falls back to
+# /tmp/fmi-criu-images). The rank agent writes CRIU images under this path, so the
+# demo must read it from the same config rather than hard-code a path that could
+# silently diverge from what the agent uses.
+fmi_config_images_dir() {
+  local cfg="$1" dir=""
+  if command -v python3 >/dev/null 2>&1; then
+    dir="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("fault_tolerance",{}).get("criu",{}).get("images_dir",""))' "$cfg" 2>/dev/null)"
+  fi
+  echo "${dir:-/tmp/fmi-criu-images}"
+}
+
 # True if something is already listening on the given TCP port.
 fmi_port_in_use() { { ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null; } | grep -q ":$1[[:space:]]"; }
 
