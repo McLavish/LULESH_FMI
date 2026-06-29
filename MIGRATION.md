@@ -100,9 +100,104 @@ migration window. The driver retries such *transient* failures up to
 state-loss bug instead surfaces as a wrong-but-present energy and is never retried
 (the `energy == golden` check fails hard).
 
+## Cross-host migration (relaxes limitation #1)
+
+`migration-demo-multihost.sh` migrates a rank **across hosts**: dumped on host **A**,
+restored on host **B** (true cross-host migration), driven from one driver. It needs
+**zero changes to the base FMI library** — it only *unbundles* what `fmi-rank-agent
+migrate` does into scriptable steps, because the two communication planes are already
+host-agnostic and the rank itself drives the quiesce:
+
+- the **data plane** (`Direct` + `tcpunchd`) is config-addressed and re-pairs lazily
+  under epoch-qualified names, so a rank restored on B with a new IP re-pairs itself;
+- the **control plane** (Redis) is config-addressed;
+- the **rank** marks itself `QUIESCED` and publishes its pid on its own when it sees
+  the migration request in Redis — the agent never touches that.
+
+So the driver does, all over the *shared* Redis/rendezvous/NFS named in the config:
+
+1. **request the cut** — `sadd <prefix>pending R` + `hset <prefix>epoch:0:states R
+   MIGRATION_PENDING` (identical to the single-host demo);
+2. **wait for quiesce** — poll `<prefix>criu:rank:R` until `state=QUIESCED`,
+   `quiesced_generation=1`, `pid>0` (the rank wrote these; it is now frozen, so the
+   image is stable — this is also the NFS read barrier);
+3. **dump on A** — `ssh A criu dump -t <pid> -D <nfs>/<comm>/epoch-1/rank-R -o
+   dump.log --shell-job --tcp-close $FMI_CRIU_EXTRA_ARGS` (flags identical to
+   `LocalRankAgent::dump_rank`);
+4. **restore on B** — `ssh B criu restore -D <same dir> -o restore.log --shell-job
+   --tcp-close --restore-detached $FMI_CRIU_EXTRA_ARGS` (flags identical to
+   `LocalRankAgent::restore_rank`);
+5. **promote the epoch** — a Redis `EVAL` of the **verbatim** `promote_epoch` Lua from
+   FMI's `ControlPlane.cpp` (flips `current_epoch` 0→1 and GCs the old per-epoch
+   hashes), which releases the restored rank and every survivor into epoch 1.
+
+The driver runs each host's command **locally when that host is the driver's own
+machine** and over `ssh` only for genuinely remote hosts, so it works co-located with
+one node and — with `HOSTS` set to a single host that is this machine — runs the whole
+unbundled flow on one box with no ssh (a smoke test of the cut logic).
+
+### Prerequisites (in addition to the single-host ones)
+
+- Passwordless `ssh` from the driver to every remote compute host.
+- One **shared** `redis-server` and one **shared** `tcpunchd`, both reachable from
+  every host. Put their addresses in the config (see below) — not `127.0.0.1`.
+- The CRIU `images_dir` on an **NFS mount with the identical path on every host**
+  (the dump writes it on A, the restore reads it on B). Per-rank logs default under
+  the same shared tree so the driver can read every host's logs.
+- The `lulesh2.0` binary reachable at the same path on every host (e.g. on the NFS
+  tree). `criu` working (rootless `--unprivileged` by default) on **every** host.
+
+### Config
+
+`fmi-lulesh-ft-multihost.json` is `fmi-lulesh-ft.json` with the CRIU `host_id` override
+dropped and three addresses that you **must** point at the shared services for a true
+multi-host run (they default to `127.0.0.1`, which only works when everything is
+co-located / for the single-box smoke test):
+
+- `backends.Direct.host` → the shared `tcpunchd` rendezvous address;
+- `fault_tolerance.control_host` (+ `control_port`) → the shared Redis;
+- `fault_tolerance.criu.images_dir` → the shared **NFS** path (identical everywhere).
+
+### Run
+
+```bash
+# single-box smoke test of the cut logic (no ssh, no second host):
+./migration-demo-multihost.sh
+
+# true cross-host migration (rank 0 dumped on A, restored on B):
+HOSTS="A B" MIGRATE_SRC=A MIGRATE_DST=B ./migration-demo-multihost.sh
+```
+
+It asserts: migrated `Final Origin Energy` **==** golden; `meta current_epoch` **==**
+1; `dump.log` on A and `restore.log` on B both produced; and (race-free snapshots) the
+rank's pid is **gone on A right after the dump** and **alive on B right after the
+restore**. Extra tunables over the single-host demo: `HOSTS`, `PLACEMENT` (per-rank
+host list), `MIGRATE_SRC`, `MIGRATE_DST`, `SSH_CMD`, `LOCAL_ALIASES`, `SHARED_DIR`/
+`LOG_DIR`.
+
+### Caveats
+
+- **PID reclaim on B**: criu restores the rank at its *original* pid; on a different
+  host that pid is usually free but not guaranteed. If it is taken, restore on fresh
+  nodes or restore into a fresh PID namespace via `FMI_CRIU_EXTRA_ARGS` (no code
+  change). This is the main CRIU risk to watch.
+- **Promote-Lua / criu-flag drift**: the driver duplicates FMI's `promote_epoch` Lua
+  and the criu flag sets. They are copied verbatim with pointers to `ControlPlane.cpp`
+  and `LocalRankAgent::dump_rank`/`restore_rank`; if FMI's epoch protocol or criu flags
+  change, re-sync the script.
+- **Stale placement string**: the restored rank re-joins with the `placement` it
+  computed at startup (says host A). Cosmetic — re-pairing keys on epoch-qualified
+  names, not on placement.
+- **No agent validation / consistent cut**: bypassing `fmi-rank-agent` drops its
+  `ensure_migration_mode` checks and batched consistent-cut. Fine for a single-rank
+  cut; a first-class cross-host feature would split the library's `dump`/`restore`
+  instead (out of scope here).
+
 ## v1 limitations (inherited from FMI's CRIU path)
 
-- Same host only (criu restores on the host that dumped).
+- **Same host** for `fmi-rank-agent migrate` / `migration-demo.sh`. **Relaxed** by
+  `migration-demo-multihost.sh` above (dump on A, restore on B) — script + config
+  only, no base-FMI change.
 - `Direct` (TCP) is the only supported data backend; Redis is the control plane.
 - One targeted rank per migration; in-flight collectives are not preserved — hence
   the allreduce quiesce point above.
