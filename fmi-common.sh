@@ -33,6 +33,39 @@ fmi_config_images_dir() {
   echo "${dir:-/tmp/fmi-criu-images}"
 }
 
+# Echo backends.Direct.host from an FMI JSON config (falls back to 127.0.0.1). This
+# is the rendezvous (tcpunchd) address every rank dials to pair the Direct backend;
+# for a multi-host run it must be an address reachable from all nodes, so the driver
+# reads it from the same config the ranks load rather than carry its own copy.
+fmi_config_direct_host() {
+  local cfg="$1" host=""
+  if command -v python3 >/dev/null 2>&1; then
+    host="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["backends"]["Direct"]["host"])' "$cfg" 2>/dev/null)"
+  fi
+  [ -n "$host" ] || host="$(awk '/"Direct"/{d=1} d&&/"host"/{gsub(/.*"host"[^"]*"/,"");gsub(/".*/,"");print;exit}' "$cfg" 2>/dev/null)"
+  echo "${host:-127.0.0.1}"
+}
+
+# Echo fault_tolerance.control_host from an FMI JSON config (falls back to
+# 127.0.0.1). This is the Redis control-plane address; for a multi-host run the
+# driver pokes the *same* shared Redis the ranks use, so it reads the address here.
+fmi_config_control_host() {
+  local cfg="$1" host=""
+  if command -v python3 >/dev/null 2>&1; then
+    host="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("fault_tolerance",{}).get("control_host",""))' "$cfg" 2>/dev/null)"
+  fi
+  echo "${host:-127.0.0.1}"
+}
+
+# Echo fault_tolerance.control_port from an FMI JSON config (falls back to 6379).
+fmi_config_control_port() {
+  local cfg="$1" port=""
+  if command -v python3 >/dev/null 2>&1; then
+    port="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("fault_tolerance",{}).get("control_port",""))' "$cfg" 2>/dev/null)"
+  fi
+  echo "${port:-6379}"
+}
+
 # True if something is already listening on the given TCP port.
 fmi_port_in_use() { { ss -ltn 2>/dev/null || netstat -ltn 2>/dev/null; } | grep -q ":$1[[:space:]]"; }
 
