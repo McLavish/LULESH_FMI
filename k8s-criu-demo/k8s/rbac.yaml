@@ -21,7 +21,9 @@ rules:
     verbs: ["get"]
   - apiGroups: [""]
     resources: ["pods/exec"]
-    verbs: ["create"]
+    # kubectl exec POSTs (verb "create"); the python client's websocket exec is a
+    # GET upgrade, which the API server authorizes as verb "get". Both are needed.
+    verbs: ["get", "create"]
   - apiGroups: ["apps"]
     resources: ["deployments", "deployments/scale"]
     verbs: ["get", "patch"]
