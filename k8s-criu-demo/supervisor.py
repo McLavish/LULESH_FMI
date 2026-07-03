@@ -118,7 +118,14 @@ def main():
             rank_env["FMI_MIGRATE_WINDOW_MS"] = migrate_window_ms
         # Truncate/create up front so `tail -F` below has something to follow.
         fh = open(log_path, "w")
-        proc = subprocess.Popen([lulesh_bin, "-s", lulesh_size, "-i", lulesh_iters],
+        # This pod is privileged, so a bare child would carry the full capability set —
+        # credentials a capability-scoped restore pod can never reproduce (bounding sets
+        # only shrink). LULESH needs no capabilities: exec the rank through setpriv with
+        # an empty bounding set (root's permitted/effective then collapse to empty at
+        # execve), so the criu image records zero caps and restores anywhere. setpriv
+        # execs in place, so proc.pid is still the rank's pid.
+        proc = subprocess.Popen(["setpriv", "--bounding-set", "-all",
+                                 lulesh_bin, "-s", lulesh_size, "-i", lulesh_iters],
                                 env=rank_env, stdout=fh, stderr=subprocess.STDOUT,
                                 start_new_session=True)
         fh.close()

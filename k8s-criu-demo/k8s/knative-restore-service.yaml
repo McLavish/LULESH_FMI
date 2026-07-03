@@ -63,6 +63,10 @@ spec:
                 # Restoring the checkpoint's monotonic clock (time-namespace offsets,
                 # kernel >= 5.6) writes /proc/self/timens_offsets, which needs SYS_TIME.
                 - SYS_TIME
+                # The checkpoint's bounding set (empty — see supervisor.py) is smaller
+                # than this pod's; criu's restorer shrinks it via PR_CAPBSET_DROP,
+                # which needs SETPCAP.
+                - SETPCAP
                 - KILL
                 - FOWNER
                 - CHOWN
