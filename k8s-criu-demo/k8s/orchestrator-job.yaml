@@ -1,0 +1,71 @@
+# Drives and verifies one LULESH evacuation-to-serverless, end to end: releases the start gate
+# (the machine pods idle until it exists), waits for the migration window, evacuates machine A,
+# restores its ranks onto Knative, promotes the epoch, checks every rank's exit, and finally
+# runs the golden reference LULESH locally to verify the migrated energy bit-for-bit.
+#
+# Apply after the machine pods are Running (idle at the gate) and the lulesh-restore Knative
+# Service is Ready, e.g.:
+#   LULESH_IMAGE=... IMAGE_PULL_POLICY=... COMM_NAME=... NUM_PEERS=8 \
+#   LULESH_SIZE=15 LULESH_ITERS=200 \
+#   envsubst < k8s/orchestrator-job.yaml | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: lulesh-orchestrator
+  namespace: lulesh-criu
+spec:
+  backoffLimit: 0
+  # Bounds the whole demo (migrated run + golden run); generous vs. the ~5 min happy path.
+  activeDeadlineSeconds: 1200
+  template:
+    metadata:
+      labels:
+        app: lulesh-orchestrator
+    spec:
+      serviceAccountName: lulesh-orchestrator
+      restartPolicy: Never
+      containers:
+        - name: orchestrator
+          image: ${LULESH_IMAGE}
+          imagePullPolicy: ${IMAGE_PULL_POLICY}
+          command: ["python3", "-u", "/opt/fmi/app/orchestrator.py"]
+          env:
+            - name: NAMESPACE
+              value: "lulesh-criu"
+            - name: COMM_NAME
+              value: "${COMM_NAME}"
+            - name: NUM_PEERS
+              value: "${NUM_PEERS}"
+            - name: REDIS_HOST
+              value: "lulesh-redis"
+            - name: TCPUNCH_HOST
+              value: "lulesh-tcpunch"
+            - name: EVACUATE_SELECTOR
+              value: "app=lulesh-machine,lulesh-machine=a"
+            - name: EVACUATE_DEPLOYMENT
+              value: "lulesh-machine-a"
+            - name: ALL_MACHINES_SELECTOR
+              value: "app=lulesh-machine"
+            - name: WORKER_CONTAINER
+              value: "lulesh-machine"
+            - name: AGENT_CONFIG
+              value: "/tmp/fmi.json"
+            - name: RESTORE_URL
+              value: "http://lulesh-restore.lulesh-criu.svc.cluster.local/restore"
+            - name: LULESH_SIZE
+              value: "${LULESH_SIZE}"
+            - name: LULESH_ITERS
+              value: "${LULESH_ITERS}"
+            # "local" = run the golden reference in this pod after the migrated run;
+            # "skip" = no energy comparison; any other value = a pinned expected energy
+            # (valid only for this exact image build).
+            - name: GOLDEN
+              value: "local"
+          resources:
+            # The golden reference runs NUM_PEERS local LULESH ranks inside this pod.
+            requests:
+              cpu: "2"
+              memory: 512Mi
+            limits:
+              cpu: "4"
+              memory: 1Gi

@@ -1,0 +1,42 @@
+# FMI's FT control plane (epochs, membership, migration state, staged CRIU image blobs) and
+# the demo's start gate all live in this Redis.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lulesh-redis
+  namespace: lulesh-criu
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lulesh-redis
+  template:
+    metadata:
+      labels:
+        app: lulesh-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7
+          args: ["--save", "", "--appendonly", "no"]
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lulesh-redis
+  namespace: lulesh-criu
+spec:
+  selector:
+    app: lulesh-redis
+  ports:
+    - port: 6379
+      targetPort: 6379

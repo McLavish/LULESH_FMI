@@ -1,0 +1,83 @@
+# The serverless restore target: evacuated LULESH ranks are criu-restored INSIDE instances of
+# this Knative Service. containerConcurrency=1 + one held /restore request per rank means every
+# rank lands in its own pod; min-scale=0 makes it genuinely scale-from-zero (the orchestrator's
+# four concurrent POSTs cold-start four instances). Each request is held while its restored
+# rank computes the remaining LULESH cycles, so timeoutSeconds bounds the post-migration
+# compute (~half a run at the defaults — far inside 600 s).
+#
+# criu restore needs elevated capabilities, which Knative Serving blocks by default. Enable the
+# feature gates once (cluster-admin), see the README:
+#   kubectl patch configmap/config-features -n knative-serving --type merge -p \
+#     '{"data":{"kubernetes.podspec-securitycontext":"enabled",
+#               "kubernetes.containerspec-addcapabilities":"enabled",
+#               "kubernetes.podspec-volumes-emptydir":"enabled"}}'
+#
+# Rendered through envsubst with LULESH_IMAGE, IMAGE_PULL_POLICY, COMM_NAME, NUM_PEERS,
+# RESTORE_MAX_SCALE (set to the number of ranks per machine, e.g. 4).
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: lulesh-restore
+  namespace: lulesh-criu
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/min-scale: "0"
+        autoscaling.knative.dev/max-scale: "${RESTORE_MAX_SCALE}"
+    spec:
+      containerConcurrency: 1
+      # Each /restore request is held while its restored rank runs; this bounds that hold.
+      timeoutSeconds: 600
+      containers:
+        - image: ${LULESH_IMAGE}
+          imagePullPolicy: ${IMAGE_PULL_POLICY}
+          command: ["python3", "-u", "/opt/fmi/app/restore_server.py"]
+          ports:
+            - containerPort: 8080
+          env:
+            - name: COMM_NAME
+              value: "${COMM_NAME}"
+            - name: NUM_PEERS
+              value: "${NUM_PEERS}"
+            - name: REDIS_HOST
+              value: "lulesh-redis"
+            - name: TCPUNCH_HOST
+              value: "lulesh-tcpunch"
+          securityContext:
+            # criu restore recreates process trees at fixed pids: root plus the ptrace/admin
+            # capabilities below. Knative cannot grant `privileged: true`; this is the minimal
+            # gated-feature set that lets restore work. If your container runtime predates the
+            # CHECKPOINT_RESTORE capability (kernel < 5.9 / old containerd), drop it from the
+            # list — SYS_ADMIN covers it on those kernels.
+            runAsUser: 0
+            capabilities:
+              add:
+                - SYS_ADMIN
+                - SYS_PTRACE
+                - SYS_RESOURCE
+                - CHECKPOINT_RESTORE
+                - NET_ADMIN
+                - SETUID
+                - SETGID
+                - KILL
+                - FOWNER
+                - CHOWN
+                - DAC_OVERRIDE
+            seccompProfile:
+              type: Unconfined
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: criu-tmp
+              mountPath: /tmp
+      volumes:
+        # Staged archives unpack here (image tree + the rank's reopened log), matching the
+        # machine pods' /tmp layout, off the overlay root.
+        - name: criu-tmp
+          emptyDir: {}

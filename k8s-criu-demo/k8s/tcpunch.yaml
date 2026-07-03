@@ -1,0 +1,47 @@
+# Direct data-plane rendezvous. CRIU forces the Direct backend, which NAT-hole-punches peers via
+# this tcpunchd. Every rank's config points Direct.host at the lulesh-tcpunch Service.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lulesh-tcpunch
+  namespace: lulesh-criu
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lulesh-tcpunch
+  template:
+    metadata:
+      labels:
+        app: lulesh-tcpunch
+    spec:
+      containers:
+        - name: tcpunch
+          image: ${LULESH_IMAGE}
+          imagePullPolicy: ${IMAGE_PULL_POLICY}
+          command: ["/opt/fmi/bin/tcpunchd", "10000"]
+          ports:
+            - containerPort: 10000
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lulesh-tcpunch
+  namespace: lulesh-criu
+spec:
+  # Headless: lulesh-tcpunch resolves straight to the rendezvous pod IP, so ranks connect to it
+  # directly (the rendezvous sees their real pod source addresses) and then hole-punch
+  # pod-to-pod, with no kube-proxy SNAT in the middle.
+  clusterIP: None
+  selector:
+    app: lulesh-tcpunch
+  ports:
+    - port: 10000
+      targetPort: 10000

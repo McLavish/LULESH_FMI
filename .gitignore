@@ -6,3 +6,8 @@
 *.o
 *.dSYM/
 /lulesh2.0
+
+# k8s-criu-demo local-gate run artifacts
+__pycache__/
+k8s-criu-demo/.restore-rank*.json
+k8s-criu-demo/.last-*.log

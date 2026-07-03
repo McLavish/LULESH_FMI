@@ -1,0 +1,98 @@
+# One "machine": a single privileged pod, pinned to a node, running this machine's slice of
+# LULESH ranks plus everything the rank agent needs to checkpoint them in place. The
+# orchestrator `kubectl exec`s `fmi-rank-agent evacuate-local` into this same container, so the
+# agent shares the ranks' PID + mount namespace — the prerequisite for criu dump.
+#
+# The pod comes up idle: the supervisor renders the config and then waits on the Redis start
+# gate (START_GATE=1) until the orchestrator Job releases it, so LULESH doesn't start computing
+# (and racing toward its migration window) while the cluster is still being preflighted.
+#
+# Templated; apply once per machine, e.g.:
+#   MACHINE_ID=a BASE_PEER_ID=0 RANKS_HERE=4 NODE_VALUE=a \
+#   LULESH_IMAGE=... IMAGE_PULL_POLICY=... COMM_NAME=... NUM_PEERS=8 \
+#   LULESH_SIZE=15 LULESH_ITERS=200 MIGRATE_AT_CYCLE=100 MIGRATE_WINDOW_MS=20000 \
+#   envsubst < k8s/machine-deployment.yaml | kubectl apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lulesh-machine-${MACHINE_ID}
+  namespace: lulesh-criu
+  labels:
+    app: lulesh-machine
+    lulesh-machine: "${MACHINE_ID}"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lulesh-machine
+      lulesh-machine: "${MACHINE_ID}"
+  template:
+    metadata:
+      labels:
+        app: lulesh-machine
+        lulesh-machine: "${MACHINE_ID}"
+    spec:
+      # Pin this machine's ranks to a specific node so "evacuate a machine" means a real node.
+      nodeSelector:
+        lulesh-machine: "${NODE_VALUE}"
+      containers:
+        - name: lulesh-machine
+          image: ${LULESH_IMAGE}
+          imagePullPolicy: ${IMAGE_PULL_POLICY}
+          command: ["python3", "-u", "/opt/fmi/app/supervisor.py"]
+          env:
+            - name: HOST_ID
+              value: "machine-${MACHINE_ID}"
+            - name: NUM_PEERS
+              value: "${NUM_PEERS}"
+            - name: BASE_PEER_ID
+              value: "${BASE_PEER_ID}"
+            - name: RANKS_HERE
+              value: "${RANKS_HERE}"
+            - name: COMM_NAME
+              value: "${COMM_NAME}"
+            - name: REDIS_HOST
+              value: "lulesh-redis"
+            - name: TCPUNCH_HOST
+              value: "lulesh-tcpunch"
+            - name: CONFIG_PATH
+              value: "/tmp/fmi.json"
+            - name: LULESH_SIZE
+              value: "${LULESH_SIZE}"
+            - name: LULESH_ITERS
+              value: "${LULESH_ITERS}"
+            - name: MIGRATE_AT_CYCLE
+              value: "${MIGRATE_AT_CYCLE}"
+            - name: MIGRATE_WINDOW_MS
+              value: "${MIGRATE_WINDOW_MS}"
+            # Idle until the orchestrator releases the Redis start gate (see supervisor.py).
+            - name: START_GATE
+              value: "1"
+            # Read by the exec'd `fmi-rank-agent evacuate-local`: each rank's log must travel in
+            # its staged archive (criu re-opens it by path on the restore host).
+            - name: FMI_CRIU_EXTRA_FILES
+              value: "/tmp/rank-{rank}.log"
+            # Rank pids start above this so they cannot collide with the restore pod's own pids.
+            - name: PID_BASE
+              value: "3000"
+          securityContext:
+            # criu needs to ptrace-seize, freeze, and recreate process trees.
+            privileged: true
+            seccompProfile:
+              type: Unconfined
+          resources:
+            # Unlike the synthetic FMI demo, the ranks compute for real (4 per machine).
+            requests:
+              cpu: "1"
+              memory: 512Mi
+            limits:
+              cpu: "4"
+              memory: 1Gi
+          volumeMounts:
+            - name: criu-tmp
+              mountPath: /tmp
+      volumes:
+        # criu writes image trees and the ranks write their logs here; an emptyDir keeps that off
+        # the (overlay) container root for cleaner checkpoint/restore IO.
+        - name: criu-tmp
+          emptyDir: {}

@@ -1,0 +1,10 @@
+# Build context for k8s-criu-demo/Dockerfile (context = repo root). Keep only the
+# sources needed to build LULESH + FMI + tcpunchd; drop VCS data, every local build
+# tree, and local demo run artifacts.
+.git
+**/.git
+**/build*
+**/__pycache__
+**/*.o
+k8s-criu-demo/.restore-rank*.json
+k8s-criu-demo/.last-*.log
