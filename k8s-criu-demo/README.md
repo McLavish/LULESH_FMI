@@ -180,6 +180,18 @@ kubectl -n lulesh-criu wait ksvc/lulesh-restore --for=condition=Ready --timeout=
 POD=$(kubectl -n lulesh-criu get pod -l serving.knative.dev/service=lulesh-restore \
       -o jsonpath='{.items[0].metadata.name}')
 kubectl -n lulesh-criu exec "$POD" -c user-container -- criu check --all
+
+# (2b) while the warm instance is up, do a real dump/restore round trip in it — this is the
+#      only cheap test that exercises the restore-side credential path (it catches capability
+#      bugs that `criu check` alone does not):
+kubectl -n lulesh-criu exec "$POD" -c user-container -- sh -c '
+  setpriv --bounding-set -all setsid sleep 300 < /dev/null > /dev/null 2>&1 &
+  sleep 1; PID=$(pgrep -f "sleep 300" | head -1)
+  mkdir -p /tmp/criu-smoke && criu dump -t "$PID" -D /tmp/criu-smoke -v1 &&
+  criu restore -D /tmp/criu-smoke -d -v1 && echo dump-restore-ok'
+# Expect a harmless tun error line (no tun devices in the pod). Note: `criu check --all` may
+# be non-zero for one optional kernel feature on some kernels (e.g. 5.14) — plain
+# `criu check` clean plus this round trip is the signal that matters.
 kubectl -n lulesh-criu patch ksvc lulesh-restore --type merge -p \
   '{"spec":{"template":{"metadata":{"annotations":{"autoscaling.knative.dev/min-scale":"0"}}}}}'
 
@@ -234,6 +246,25 @@ Expected:
 
 You can watch the four Knative pods cold-start during the restore step:
 `kubectl -n lulesh-criu get pods -l serving.knative.dev/service=lulesh-restore -w`.
+
+The energy value above is a sample, not the expected answer: the golden energy is
+binary-specific, so every image build has its own value. Nothing to configure — the
+orchestrator computes the golden reference itself with the same binary.
+
+### 2g. Between runs
+
+To re-run without redeploying everything:
+
+```bash
+kubectl -n lulesh-criu delete job lulesh-orchestrator
+kubectl -n lulesh-criu exec deploy/lulesh-redis -- redis-cli flushall
+kubectl -n lulesh-criu scale deploy/lulesh-machine-a --replicas=1
+kubectl -n lulesh-criu rollout restart deploy/lulesh-machine-a deploy/lulesh-machine-b
+kubectl -n lulesh-criu rollout status deploy/lulesh-machine-a --timeout=180s
+kubectl -n lulesh-criu rollout status deploy/lulesh-machine-b --timeout=180s
+kubectl -n lulesh-criu logs deploy/lulesh-machine-a --tail=1   # "waiting for start gate ..."
+# then re-apply the orchestrator job (2f)
+```
 
 ## Cleanup
 
