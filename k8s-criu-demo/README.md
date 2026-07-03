@@ -266,6 +266,38 @@ kubectl -n lulesh-criu logs deploy/lulesh-machine-a --tail=1   # "waiting for st
 # then re-apply the orchestrator job (2f)
 ```
 
+## Slimfly (CSCS) cheat sheet
+
+Concrete values for re-running on the slimfly cluster (kubectl context
+`kubernetes-admin@kubernetes`; Knative Serving + Kourier preinstalled). Verified end-to-end
+PASSED on 2026-07-03 (~80 s, `Final Origin Energy = 8.105927e+05` for that image build).
+
+- **Env (§2)**: `LULESH_IMAGE=148.187.111.28:30500/lulesh-criu-evac:v1` — the in-cluster
+  NodePort registry (deployment `fmi-registry` in the `fmi` namespace); all nodes pull from it
+  insecurely. Everything else per §2.
+- **Image (only if code changed)**: no docker/podman on the workstation; only slimfly18 has
+  podman, and home is NFS-shared:
+
+  ```bash
+  ssh slimfly18 "cd ~/thesis/repos/LULESH_FMI && \
+    sudo podman build -f k8s-criu-demo/Dockerfile -t $LULESH_IMAGE . && \
+    sudo podman push --tls-verify=false $LULESH_IMAGE"
+  ```
+
+- **Feature gates + labels**: both were reverted after the 2026-07-03 run — re-apply §2a, then
+
+  ```bash
+  kubectl label node slimfly16.cscs.ch lulesh-machine=a --overwrite
+  kubectl label node slimfly17.cscs.ch lulesh-machine=b --overwrite
+  ```
+
+- **Deploy/preflight/run**: §2c–2f exactly as written. On the 5.14 kernel (Rocky 9.4),
+  `criu check --all` reports one optional missing feature — plain `criu check` plus the
+  §2e(2b) round trip is the signal.
+- **Host leftovers**: a host `redis-server`/`tcpunchd` may linger on slimfly14/15 from the
+  non-k8s multihost demo — harmless here (the demo is ClusterIP-internal), but check
+  `pgrep redis-server` before host-level demos.
+
 ## Cleanup
 
 ```bash
