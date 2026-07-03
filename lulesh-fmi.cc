@@ -11,8 +11,14 @@
 // lower-ranked endpoint of the pair sends first, the higher-ranked one receives
 // first. The globally-lowest unfinished rank therefore never blocks on a send
 // before it reaches a recv that drains a higher peer, so progress is guaranteed
-// up the ranks. FMI's Direct backend uses separate directional sockets for A->B
-// and B->A, so a send and recv to/from the same peer never self-deadlock.
+// up the ranks. FMI's Direct backend multiplexes both directions of a pair over
+// ONE duplex TCP socket (a single sockets[partner] slot in Direct.cpp), created
+// on first use by TCPunch-pairing under a name both ends derive from the same
+// matched send/recv; TCP being full-duplex, a send and recv to/from the same
+// peer still never self-deadlock. This ordering is also what keeps that pairing
+// safe: it makes the first contact on every pair a matched op, so both endpoints
+// request the same pairing name. (If two unmatched sends were each side's first
+// contact, each would block on a pairing name the other never requests.)
 //
 // Everything runs on the master thread only (LULESH uses MPI_THREAD_FUNNELED),
 // which also keeps FMI operation boundaries clean for the future CRIU migration.
