@@ -1,0 +1,101 @@
+{
+  "backends": {
+    "S3": {
+      "enabled": false,
+      "bucket_name": "unused",
+      "s3_region": "eu-central-1",
+      "timeout": 100,
+      "max_timeout": 1000
+    },
+    "Redis": {
+      "enabled": false,
+      "host": "127.0.0.1",
+      "port": 6379,
+      "timeout": 1,
+      "max_timeout": 1000
+    },
+    "Direct": {
+      "enabled": false,
+      "host": "127.0.0.1",
+      "port": 10000,
+      "max_timeout": 1000
+    },
+    "DirectTCP": {
+      "enabled": true,
+      "registry_host": "127.0.0.1",
+      "registry_port": 6379,
+      "bind_host": "127.0.0.1",
+      "advertise_host": "127.0.0.1",
+      "max_timeout": 60000,
+      "registry_poll_interval_ms": 20,
+      "connect_retry_interval_ms": 20,
+      "registry_ttl_s": 3600,
+      "framed": true,
+      "recover_links": true
+    },
+    "DrainTCP": {
+      "enabled": false,
+      "registry_host": "127.0.0.1",
+      "registry_port": 6379,
+      "bind_host": "127.0.0.1",
+      "advertise_host": "127.0.0.1",
+      "max_timeout": 60000,
+      "registry_poll_interval_ms": 20,
+      "connect_retry_interval_ms": 20,
+      "registry_ttl_s": 3600,
+      "drain": true,
+      "trigger": "both",
+      "drain_signal_offset": 3,
+      "drain_grace_ms": 5000,
+      "migration_max_ms": 120000,
+      "establish_yield_ms": 2000,
+      "batch_lease_ms": 120000,
+      "control_poll_interval_ms": 20
+    }
+  },
+  "model": {
+    "FaaS": {
+      "gib_second_price": 1.66667e-05
+    },
+    "S3": {
+      "bandwidth": 50.0,
+      "overhead": 40.4,
+      "transfer_price": 0.0,
+      "download_price": 4.3e-07,
+      "upload_price": 5.4e-06
+    },
+    "Redis": {
+      "bandwidth_single": 100.0,
+      "bandwidth_multiple": 400.0,
+      "overhead": 5.2,
+      "transfer_price": 0.0,
+      "instance_price": 0.0038,
+      "requests_per_hour": 1000,
+      "include_infrastructure_costs": true
+    },
+    "Direct": {
+      "bandwidth": 400.0,
+      "overhead": 0.34,
+      "transfer_price": 0.0,
+      "vm_price": 0.0134,
+      "requests_per_hour": 1000,
+      "include_infrastructure_costs": true
+    },
+    "DirectTCP": {
+      "bandwidth": 400.0,
+      "overhead": 0.2,
+      "transfer_price": 0.0,
+      "vm_price": 0.0134,
+      "requests_per_hour": 1000,
+      "include_infrastructure_costs": true
+    },
+    "DrainTCP": {
+      "bandwidth": 400.0,
+      "overhead": 0.2,
+      "transfer_price": 0.0,
+      "vm_price": 0.0134,
+      "requests_per_hour": 1000,
+      "include_infrastructure_costs": true
+    }
+  }
+}

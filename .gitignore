@@ -1,6 +1,6 @@
 # Out-of-source build directories
-/build/
-/build-*/
+build/
+build-*/
 
 # In-source object files / binaries (Makefile build)
 *.o
@@ -11,3 +11,7 @@
 __pycache__/
 k8s-criu-demo/.restore-rank*.json
 k8s-criu-demo/.last-*.log
+
+# Migration-driver evidence: per-run logs and criu images (can be GBs)
+drain-runs/
+seq-runs/
