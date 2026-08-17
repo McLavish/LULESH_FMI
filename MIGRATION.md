@@ -1,5 +1,16 @@
 # CRIU rank-migration demo (LULESH on FMI)
 
+> **HISTORICAL — this file describes the epoch-era control plane, which FMI no longer has.**
+> It was deleted upstream (no `fmi-rank-agent`, no `promote_epoch`, no `FMI_ENABLE_CRIU`, and
+> `WITH_FMI_CRIU` is now only an alias for `WITH_FMI`), so **nothing below runs against the
+> pinned submodule**; it is kept for reference only. Two protocols replaced it, both armed by
+> the JSON config alone with nothing in the application: the **neighborhood drain**
+> (`DrainTCP`) and the **sequenced links** (`DirectTCP`, framed + `recover_links`).
+>
+> For the current system read **`CLAUDE.md`** (build, launch, migrate, and what else here is
+> historical); for the evidence, **`MULTIHOST.md`** (four machines, 23 cross-host migrations,
+> every run bit-identical) and `extern/fmi/runbooks/{drain-migration,criu-transparent-checkpoint}/`.
+
 This demo migrates a **running LULESH rank** to a fresh process image **mid-run**
 using CRIU, driven by FMI's transparent-migration control plane, and proves the
 migrated rank's full **in-memory physics state survived**: the run finishes with a
