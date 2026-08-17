@@ -15,7 +15,7 @@ holding **zero sockets**, and criu images it with no `--tcp-close`, no `--tcp-es
 
 | | |
 | --- | --- |
-| date / trees | 2026-08-14; FMI `feat/neighborhood-drain` @ `91b3b31`, this tree's then-uncommitted port. That FMI hash is **pre-rewrite and no longer reachable**: the branch was merged into `dev` and its history rebuilt, and the commit carrying this code is now `dev` @ `8fe6b69`, which is what the `extern/fmi` gitlink pins. Re-verified against it on 2026-08-17 (below). |
+| date / trees | 2026-08-14; FMI `feat/neighborhood-drain` @ `91b3b31`, this tree's then-uncommitted port. That FMI hash is **pre-rewrite and no longer reachable**: the branch was merged into `dev` and its history rebuilt, and the commit carrying this code is now `dev` @ `11e9054`, which is what the `extern/fmi` gitlink pins. Re-verified against it on 2026-08-17 (below). |
 | cluster | criu-testing `10.164.0.3` (T, 8c), criu-node-2 `.4` (N2), criu-node-1 `.5` (N1), criu-node-3 `.6` (N3); Rocky 9.8, criu 3.19 under `sudo`, shared `/scratch` |
 | build | `/scratch/LULESH_FMI`, `extern/fmi` a symlink to the shared `/scratch/fmi`; `cmake -DWITH_FMI=ON -DWITH_OPENMP=OFF -DCMAKE_BUILD_TYPE=Release` — the single-host build's options exactly, because the golden energy came from them |
 | binary | `build-fmi-drain/lulesh2.0`, sha256 `8545f08ee26c1cd4ac1c799dcf3400fe910ff78db0a195611947f03ec6fd7bfe`, identical on all four nodes |
@@ -68,7 +68,7 @@ with four ranks on one 4-core box). The clean run is 26 s.
 
 ## Re-verified against the pinned submodule (2026-08-17)
 
-The campaign above predates the FMI history rewrite. Rebuilt from `extern/fmi` @ `8fe6b69` and
+The campaign above predates the FMI history rewrite. Rebuilt from `extern/fmi` @ `11e9054` and
 re-run on the same four machines, one smoke per protocol, both `PASS` with the golden energy:
 
 | check | result |
