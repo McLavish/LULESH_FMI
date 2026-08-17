@@ -8,9 +8,13 @@ option(WITH_FMI_CRIU "Build LULESH with FMI + CRIU rank-migration support (impli
 option(WITH_OPENMP   "Build LULESH with OpenMP"       TRUE)
 option(WITH_SILO     "Build LULESH with silo support" FALSE)
 
-# CRIU migration support is an extension of the FMI backend: it pulls in FMI's
-# Redis control plane, CRIU state transfer, and the fmi-rank-agent tool
-# (see the WITH_FMI branch below). Asking for it implies the FMI backend.
+# CRIU rank migration is no longer a compile-time feature of FMI: the epoch-era
+# control plane (FMI_ENABLE_CRIU, FMI_BUILD_TOOLS, fmi-rank-agent) was removed
+# upstream and replaced by the neighborhood-drain protocol, which lives entirely
+# in the DrainTCP backend and is turned on by the JSON config ("drain": true),
+# not by a CMake option. All that is left of the distinction here is that the
+# migration path needs the Redis-backed transports; keep the option as an alias
+# for the FMI backend so the existing build-dir names still work.
 if (WITH_FMI_CRIU)
   set(WITH_FMI ON)
 endif()
@@ -28,22 +32,19 @@ if (WITH_MPI)
   add_definitions("-DUSE_MPI=1")
   list(APPEND LULESH_EXTERNAL_LIBS ${MPI_C_LIBRARIES} ${MPI_CXX_LIBRARIES})
 elseif (WITH_FMI)
-  # S3 is never needed (and pulls in the AWS SDK), so it is always off.
-  set(FMI_ENABLE_S3 OFF CACHE BOOL "" FORCE)
-  if (WITH_FMI_CRIU)
-    # CRIU rank-migration demo: enable the Redis control plane + CRIU state
-    # transfer, and build FMI's tools so fmi-rank-agent is produced
-    # (tools default OFF when FMI is consumed via add_subdirectory). Requires
-    # Redis + hiredis at build time.
-    set(FMI_ENABLE_REDIS ON CACHE BOOL "" FORCE)
-    set(FMI_ENABLE_CRIU  ON CACHE BOOL "" FORCE)
-    set(FMI_BUILD_TOOLS  ON CACHE BOOL "" FORCE)
-  else()
-    # Minimal FMI: Direct (TCP) backend only, no S3/Redis/CRIU, so the only extra
-    # deps are Boost + ZLIB + TCPunch.
-    set(FMI_ENABLE_REDIS OFF CACHE BOOL "" FORCE)
-    set(FMI_ENABLE_CRIU  OFF CACHE BOOL "" FORCE)
-  endif()
+  # The new FMI exposes exactly four options (FMI_ENABLE_S3 / _REDIS / _TCPUNCH /
+  # FMI_BUILD_TESTS); FMI_ENABLE_CRIU and FMI_BUILD_TOOLS were deleted with the
+  # epoch control plane and setting them here would silently do nothing.
+  #   * S3      -- pulls in the AWS SDK, never needed by LULESH.
+  #   * TCPunch -- the NAT rendezvous the Direct backend needs; the ranks here can
+  #                reach each other directly, so DirectTCP/DrainTCP are used instead
+  #                and the extern/TCPunch submodule need not even be checked out.
+  #   * Redis   -- required: it is the peer registry both TCP-direct transports
+  #                discover through, and DrainTCP's coordinator event stream.
+  set(FMI_ENABLE_S3      OFF CACHE BOOL "" FORCE)
+  set(FMI_ENABLE_TCPUNCH OFF CACHE BOOL "" FORCE)
+  set(FMI_ENABLE_REDIS   ON  CACHE BOOL "" FORCE)
+  set(FMI_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
   add_subdirectory(extern/fmi)
   add_definitions("-DUSE_MPI=0" "-DUSE_FMI=1")
   list(APPEND LULESH_EXTERNAL_LIBS FMI::FMI)
