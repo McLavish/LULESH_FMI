@@ -55,6 +55,35 @@ struct PendingOp {
 std::vector<PendingOp> g_pending;
 bool g_flushed = false; // the current batch has already been executed
 
+// Optional per-rank operation census, enabled by FMI_SHIM_COUNTS=1 in the environment and
+// printed once at MPI_Finalize. Costs a handful of integer increments per call when
+// enabled and a cached-bool test when not; exists so a run's collective/p2p mix can feed
+// the steady-state overhead model (fmi-bench docs/MODEL.md) without instrumenting LULESH.
+struct ShimCounts {
+    unsigned long long sends = 0, send_bytes = 0;
+    unsigned long long recvs = 0, recv_bytes = 0;
+    unsigned long long allreduces = 0, reduces = 0, barriers = 0;
+};
+ShimCounts g_counts;
+
+bool shim_counts_enabled() {
+    static const bool on = [] {
+        const char* v = std::getenv("FMI_SHIM_COUNTS");
+        return v != nullptr && v[0] == '1';
+    }();
+    return on;
+}
+
+void print_shim_counts() {
+    if (!shim_counts_enabled()) return;
+    std::printf("rank %d: SHIM_COUNTS sends=%llu send_bytes=%llu recvs=%llu "
+                "recv_bytes=%llu allreduce=%llu reduce=%llu barrier=%llu\n",
+                g_rank, g_counts.sends, g_counts.send_bytes, g_counts.recvs,
+                g_counts.recv_bytes, g_counts.allreduces, g_counts.reduces,
+                g_counts.barriers);
+    std::fflush(stdout);
+}
+
 [[noreturn]] void fail(const std::string& what) {
     std::fprintf(stderr, "[FMI rank %d] fatal: %s\n", g_rank, what.c_str());
     std::exit(1);
@@ -101,11 +130,19 @@ void record_pending(bool is_send, int peer, char* buf, size_t bytes) {
 void send_one(const PendingOp& op) {
     FMI::Comm::Data<void*> d(static_cast<void*>(op.buf), op.bytes);
     g_comm->send(d, static_cast<FMI::Utils::peer_num>(op.peer));
+    if (shim_counts_enabled()) {
+        g_counts.sends++;
+        g_counts.send_bytes += op.bytes;
+    }
 }
 
 void recv_one(const PendingOp& op) {
     FMI::Comm::Data<void*> d(static_cast<void*>(op.buf), op.bytes);
     g_comm->recv(d, static_cast<FMI::Utils::peer_num>(op.peer));
+    if (shim_counts_enabled()) {
+        g_counts.recvs++;
+        g_counts.recv_bytes += op.bytes;
+    }
 }
 
 void flush_batch() {
@@ -176,9 +213,11 @@ void scalar_collective(const void* sendbuf, void* recvbuf, MPI_Op op, int root, 
     if (allreduce) {
         g_comm->allreduce(sd, rd, fn);
         *static_cast<T*>(recvbuf) = rd.get();
+        if (shim_counts_enabled()) g_counts.allreduces++;
     } else {
         g_comm->reduce(sd, rd, static_cast<FMI::Utils::peer_num>(root), fn);
         if (g_rank == root) *static_cast<T*>(recvbuf) = rd.get();
+        if (shim_counts_enabled()) g_counts.reduces++;
     }
 }
 
@@ -243,6 +282,9 @@ int MPI_Init_thread(int* argc, char*** argv, int /*required*/, int* provided) {
 }
 
 int MPI_Finalize() {
+    // Before the Communicator goes: the counts line must be on stdout even if a
+    // drain-armed teardown later stalls or dies.
+    print_shim_counts();
     delete g_comm;
     g_comm = nullptr;
     return MPI_SUCCESS;
@@ -267,6 +309,7 @@ double MPI_Wtime() {
 
 int MPI_Barrier(MPI_Comm /*comm*/) {
     assert_no_pending("MPI_Barrier");
+    if (shim_counts_enabled()) g_counts.barriers++;
     try {
         g_comm->barrier();
     } catch (const std::exception& e) {
