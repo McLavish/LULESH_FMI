@@ -87,7 +87,9 @@ cmake --build build -j8
   `lulesh2.0-single` from it; same flags, same env contract, and it reproduces the golden
   (the drivers accept it via `LULESH_BIN` / `--binary`). The `.hpp` is the merged
   `lulesh-fmi.h` + `lulesh.h`; standalone build is `c++ -std=c++17 -O3 -I<fmi>/include
-  lulesh.cpp` plus `libFMI` and its deps.
+  lulesh.cpp` plus `libFMI` and its deps. A launcher-driven variant of the same squash lives
+  in the FMI repo as `example_programs/lulesh.cpp` (`--ranks 8 --size 30`, CLI only, no env
+  contract) — a workload example, not the migration subject the drivers use.
 
 ## Run
 
