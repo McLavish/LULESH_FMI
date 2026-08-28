@@ -100,4 +100,11 @@ if (WITH_FMI)
   # is not propagated by FMI::FMI and must be added explicitly here.
   target_compile_features(${LULESH_EXEC} PRIVATE cxx_std_17)
   target_include_directories(${LULESH_EXEC} PRIVATE ${FMI_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
+
+  # The same program as one translation unit: single/lulesh.{cpp,hpp}, generated
+  # from the sources above by single/generate.sh. Same flags, same golden energy.
+  add_executable(lulesh2.0-single single/lulesh.cpp)
+  target_link_libraries(lulesh2.0-single ${LULESH_EXTERNAL_LIBS})
+  target_compile_features(lulesh2.0-single PRIVATE cxx_std_17)
+  target_include_directories(lulesh2.0-single PRIVATE ${FMI_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
 endif()

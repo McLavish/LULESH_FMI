@@ -80,6 +80,14 @@ cmake --build build -j8
   ordinary identical builds — the protocol is a config choice, not a build choice — so
   `cp -a build-fmi-drain build-fmi-seq` is a legitimate way to make the second.
 - The `Makefile` is upstream LULESH's (MPI/serial only, Livermore paths); use CMake.
+- **`single/lulesh.{cpp,hpp}`** is the whole program as one translation unit (the shim
+  inline, backend fixed to FMI, silo body dropped, LLNL license hoisted to the top). It is
+  **generated** — `single/generate.sh` concatenates the sources above; never edit it by
+  hand, regenerate after touching any `lulesh*.cc/.h`. The `WITH_FMI` build also produces
+  `lulesh2.0-single` from it; same flags, same env contract, and it reproduces the golden
+  (the drivers accept it via `LULESH_BIN` / `--binary`). The `.hpp` is the merged
+  `lulesh-fmi.h` + `lulesh.h`; standalone build is `c++ -std=c++17 -O3 -I<fmi>/include
+  lulesh.cpp` plus `libFMI` and its deps.
 
 ## Run
 
